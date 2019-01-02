@@ -1,35 +1,14 @@
-# Alfresco Platform JAR Module - SDK 3
+# fileServersNG
+The replacement Alfresco file servers subsystem based on the JFileServer file server code. 
 
-To run use `mvn clean install -DskipTests=true alfresco:run` or `./run.sh` and verify that it 
+In the POM.xml file set the <alfresco.platform.version> to the version of Alfresco that you will be
+deploying the fileServersNG file server subsystem on.
 
- * Runs the embedded Tomcat + H2 DB 
- * Runs Alfresco Platform (Repository)
- * Runs Alfresco Solr4
- * Packages both as JAR and AMP assembly
- 
- Try cloning it, change the port and play with `enableShare`, `enablePlatform` and `enableSolr`. 
- 
- Protip: This module will work just fine as a Share module if the files are changed and 
- if the enablePlatform and enableSolr is disabled.
- 
-# Few things to notice
+One way to find the Alfresco version is by logging in with Share, click on the Alfresco logo at
+the bottom of the web page, the popup window should show the Alfresco version, for example '5.2.f'.
 
- * No parent pom
- * WAR assembly is handled by the Alfresco Maven Plugin configuration
- * Standard JAR packaging and layout
- * Works seamlessly with Eclipse and IntelliJ IDEA
- * JRebel for hot reloading, JRebel maven plugin for generating rebel.xml, agent usage: `MAVEN_OPTS=-Xms256m -Xmx1G -agentpath:/home/martin/apps/jrebel/lib/libjrebel64.so`
- * AMP as an assembly
- * [Configurable Run mojo](https://github.com/Alfresco/alfresco-sdk/blob/sdk-3.0/plugins/alfresco-maven-plugin/src/main/java/org/alfresco/maven/plugin/RunMojo.java) in the `alfresco-maven-plugin`
- * No unit testing/functional tests just yet
- * Resources loaded from META-INF
- * Web Fragment (this includes a sample servlet configured via web fragment)
- 
-# TODO
- 
-  * Abstract assembly into a dependency so we don't have to ship the assembly in the archetype
-  * Purge, 
-  * Functional/remote unit tests
-   
-  
- 
+To build the fileServersNG AMP use `mvn clean package`, this will create the fileServersNG-v5-1.0.0.amp
+file in the target/ folder.
+
+For more complete instructions on how to build and deploy the fileServersNG subsystem see
+[here](http://filesys.org/wiki/index.php/How_to_build_and_deploy_the_fileServersNG_subsystem).
