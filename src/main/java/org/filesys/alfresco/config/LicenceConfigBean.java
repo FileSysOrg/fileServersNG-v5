@@ -17,8 +17,6 @@
 
 package org.filesys.alfresco.config;
 
-import org.filesys.app.EnterpriseFileServer;
-
 import java.io.*;
 
 /**
