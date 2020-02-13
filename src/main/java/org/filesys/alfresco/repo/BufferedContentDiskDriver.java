@@ -29,6 +29,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.Date;
+import java.util.List;
 
 import org.filesys.alfresco.base.ExtendedDiskInterface;
 import org.filesys.server.SrvSession;
@@ -38,6 +39,9 @@ import org.filesys.server.core.SharedDevice;
 import org.filesys.server.filesys.*;
 import org.filesys.server.filesys.cache.FileState;
 import org.filesys.server.filesys.cache.FileStateCache;
+import org.filesys.server.filesys.postprocess.PostCloseProcessor;
+import org.filesys.server.filesys.version.FileVersionInfo;
+import org.filesys.server.filesys.version.VersionInterface;
 import org.filesys.server.locking.FileLockingInterface;
 import org.filesys.server.locking.LockManager;
 import org.filesys.server.locking.OpLockInterface;
@@ -70,8 +74,10 @@ public class BufferedContentDiskDriver implements ExtendedDiskInterface,
         DiskInterface,
         DiskSizeInterface,
         IOCtlInterface,
-    OpLockInterface, 
-    FileLockingInterface,
+        OpLockInterface,
+        FileLockingInterface,
+        VersionInterface,
+        PostCloseProcessor,
     NodeServicePolicies.OnDeleteNodePolicy,
     NodeServicePolicies.OnMoveNodePolicy 
 {
@@ -86,10 +92,15 @@ public class BufferedContentDiskDriver implements ExtendedDiskInterface,
     
     private OpLockInterface opLockInterface;
     
-    private FileLockingInterface fileLockingInterface; 
-    
+    private FileLockingInterface fileLockingInterface;
+
+    private VersionInterface versionInterface;
+
     private PolicyComponent policyComponent;
-        
+
+    // Enable/disable use of the post close processor
+    private boolean usePostClose;
+
     public void init()
     {
         PropertyCheck.mandatory(this, "diskInterface", diskInterface);
@@ -99,6 +110,7 @@ public class BufferedContentDiskDriver implements ExtendedDiskInterface,
         PropertyCheck.mandatory(this, "fileLockingInterface", getFileLockingInterface());
         PropertyCheck.mandatory(this, "opLockInterface", getOpLockInterface());
         PropertyCheck.mandatory(this, "fileLockingInterface", fileLockingInterface);
+        PropertyCheck.mandatory(this, "versionInterface", versionInterface);
         PropertyCheck.mandatory(this, "policyComponent", getPolicyComponent());
         
         getPolicyComponent().bindClassBehaviour( NodeServicePolicies.OnDeleteNodePolicy.QNAME,
@@ -657,6 +669,103 @@ public class BufferedContentDiskDriver implements ExtendedDiskInterface,
     public FileLockingInterface getFileLockingInterface()
     {
         return fileLockingInterface;
+    }
+
+    /**
+     * Return the filesystem version interface
+     *
+     * @return VersionInterface
+     */
+    public VersionInterface getVersionInterface() {
+        return versionInterface;
+    }
+
+    /**
+     * Set the filesystem version interface
+     *
+     * @param verInterface VersionInterface
+     */
+    public void setVersionInterface(VersionInterface verInterface) {
+        this.versionInterface = verInterface;
+    }
+
+    /**
+     * Check if the post close processor feature  is enabled
+     *
+     * @return boolean
+     */
+    public final boolean getEnablePostClose() { return usePostClose; }
+
+    /**
+     * Enable/disable the post close processor feature
+     *
+     * @param ena boolean
+     */
+    public final void setEnablePostClose(boolean ena) { usePostClose = ena; }
+
+    /**
+     * Get the list of available previous versions for the specified path
+     *
+     * @param sess Server session
+     * @param tree Tree connection
+     * @param file Network file
+     * @return List &lt; FileVersionInfo &gt;
+     * @throws IOException If an error occurs.
+     */
+    public List<FileVersionInfo> getPreviousVersions(SrvSession sess, TreeConnection tree, NetworkFile file)
+            throws IOException {
+        return versionInterface.getPreviousVersions(sess, tree, file);
+    }
+
+    /**
+     * Open a previous version of a file
+     *
+     * @param sess   Server session
+     * @param tree   Tree connection
+     * @param params File open parameters
+     * @return NetworkFile
+     * @throws IOException If an error occurs.
+     */
+    public NetworkFile openPreviousVersion(SrvSession sess, TreeConnection tree, FileOpenParams params)
+            throws IOException {
+        return versionInterface.openPreviousVersion(sess, tree, params);
+    }
+
+    /**
+     * Return the file information for a particular version of a file
+     *
+     * @param sess      Server session
+     * @param tree      Tree connection
+     * @param path      String
+     * @param timeStamp long
+     * @return FileInfo
+     * @throws IOException If an error occurs.
+     */
+    public FileInfo getPreviousVersionFileInformation(SrvSession sess, TreeConnection tree, String path, long timeStamp)
+            throws IOException {
+        return versionInterface.getPreviousVersionFileInformation(sess, tree, path, timeStamp);
+    }
+
+    //-------------------- PostCloseProcessor implementation --------------------//
+
+    /**
+     * Post close the file, called after the protocol layer has sent the close response to the client.
+     *
+     * @param sess    Server session
+     * @param tree    Tree connection.
+     * @param netFile Network file context.
+     * @throws IOException If an error occurs.
+     */
+    public void postCloseFile(SrvSession sess, TreeConnection tree, NetworkFile netFile)
+            throws IOException
+    {
+        // Close the file
+        diskInterface.closeFile(sess, tree, netFile);
+
+        // If the fileInfo cache may have just had some content updated.
+        if (! netFile.isDirectory() && ! netFile.isReadOnly()) {
+            fileInfoCache.clear();
+        }
     }
 }
   

@@ -34,12 +34,13 @@ import java.io.InputStream;
 import java.io.Serializable;
 import java.net.InetAddress;
 import java.nio.charset.Charset;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import org.alfresco.error.AlfrescoRuntimeException;
+import org.alfresco.service.cmr.repository.*;
+import org.alfresco.service.cmr.version.Version;
+import org.alfresco.service.cmr.version.VersionHistory;
+import org.alfresco.service.cmr.version.VersionService;
 import org.filesys.alfresco.base.AlfrescoContext;
 import org.filesys.alfresco.base.AlfrescoDiskDriver;
 import org.filesys.alfresco.base.ExtendedDiskInterface;
@@ -56,6 +57,8 @@ import org.filesys.server.filesys.pseudo.PseudoFileList;
 import org.filesys.server.filesys.pseudo.PseudoNetworkFile;
 import org.filesys.server.filesys.quota.QuotaManager;
 import org.filesys.server.filesys.quota.QuotaManagerException;
+import org.filesys.server.filesys.version.FileVersionInfo;
+import org.filesys.server.filesys.version.VersionInterface;
 import org.filesys.server.locking.FileLockingInterface;
 import org.filesys.server.locking.LockManager;
 import org.filesys.server.locking.OpLockInterface;
@@ -79,15 +82,6 @@ import org.alfresco.service.cmr.coci.CheckOutCheckInService;
 import org.alfresco.service.cmr.lock.LockService;
 import org.alfresco.service.cmr.lock.NodeLockedException;
 import org.alfresco.service.cmr.model.FileFolderService;
-import org.alfresco.service.cmr.repository.ContentData;
-import org.alfresco.service.cmr.repository.ContentIOException;
-import org.alfresco.service.cmr.repository.ContentReader;
-import org.alfresco.service.cmr.repository.ContentService;
-import org.alfresco.service.cmr.repository.ContentWriter;
-import org.alfresco.service.cmr.repository.MimetypeService;
-import org.alfresco.service.cmr.repository.NodeRef;
-import org.alfresco.service.cmr.repository.NodeService;
-import org.alfresco.service.cmr.repository.StoreRef;
 import org.alfresco.service.cmr.repository.datatype.DefaultTypeConverter;
 import org.alfresco.service.cmr.search.SearchService;
 import org.alfresco.service.cmr.security.AccessStatus;
@@ -113,8 +107,9 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
         DiskSizeInterface,
         IOCtlInterface,
         RepositoryDiskInterface,
-    OpLockInterface, 
-    FileLockingInterface
+        OpLockInterface,
+        FileLockingInterface,
+        VersionInterface
 {
     // Logging
     private static final Log logger = LogFactory.getLog(ContentDiskDriver2.class);
@@ -141,6 +136,7 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
     private NodeArchiveService nodeArchiveService;
     private HiddenAspect hiddenAspect;
     private LockKeeper lockKeeper;
+    private VersionService versionService;
 
     // TODO Should not be here - should be specific to a context.
 	private boolean isLockedFilesAsOffline;
@@ -170,6 +166,7 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
         PropertyCheck.mandatory(this, "hiddenAspect", hiddenAspect);
         PropertyCheck.mandatory(this, "lockKeeper", lockKeeper);
         PropertyCheck.mandatory(this, "deletePseudoFileCache",  deletePseudoFileCache);
+        PropertyCheck.mandatory(this, "versionService", versionService);
     }
     
     /**
@@ -266,7 +263,14 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
     public final LockService getLockService() {
         return lockService;
     }
-    
+
+    /**
+     * Return the version service
+     *
+     * @return VersionService
+     */
+    public final VersionService getVersionService() { return versionService; }
+
     /**
      * Get the policy behaviour filter, used to inhibit versioning on a per transaction basis
      */
@@ -374,7 +378,14 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
     public void setLockService(LockService lockService) {
         this.lockService = lockService;
     }
-    
+
+    /**
+     * Set the version service
+     *
+     * @param versionService VersionService
+     */
+    public void setVersionService(VersionService versionService) { this.versionService = versionService; }
+
     /**
      * Set the policy behaviour filter, used to inhibit versioning on a per transaction basis
      * 
@@ -3272,4 +3283,185 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
 		this.deletePseudoFileCache = deletePseudoFileCache;
 	}
 
+
+    //-------------------- VersionInterface implementation --------------------//
+    /**
+     * Get the list of available previous versions for the specified path
+     *
+     * @param session Server session
+     * @param tree Tree connection
+     * @param file Network file
+     * @return List &lt; FileVersionInfo &gt;
+     * @throws IOException If an error occurs.
+     */
+    public List<FileVersionInfo> getPreviousVersions(SrvSession session, TreeConnection tree, NetworkFile file)
+            throws IOException {
+
+        // Check if the file is a pseudo-file
+        if ( file instanceof PseudoNetworkFile)
+            return null;
+
+        // Check if the file is a directory
+        if ( file.isDirectory())
+            return null;
+
+        List<FileVersionInfo> versionList = null;
+
+        try {
+
+            // Find the node for this file
+            NodeRef nodeRef = getNodeForPath(tree, file.getFullName());
+
+            if (nodeRef != null) {
+
+                // Get the version history for the file
+                VersionHistory versionHistory = versionService.getVersionHistory( nodeRef);
+
+                if ( versionHistory != null) {
+
+                    // Get the list of versions
+                    Collection<Version> versions = versionHistory.getAllVersions();
+
+                    if ( versions != null) {
+
+                        // Create the file version information list
+                        versionList = new ArrayList<>(versions.size());
+
+                        for (Version curVer : versions) {
+
+                            // Convert to a file version information object
+                            FileVersionInfo verInfo = new FileVersionInfo(curVer.getFrozenModifiedDate().getTime());
+
+                            versionList.add(verInfo);
+                        }
+                    }
+                }
+            }
+        }
+        catch ( AspectMissingException ex) {
+        }
+
+        return versionList;
+    }
+
+    /**
+     * Open a previous version of a file
+     *
+     * @param session Server session
+     * @param tree    Tree connection
+     * @param params  File open parameters
+     * @return NetworkFile
+     * @throws IOException If an error occurs.
+     */
+    public NetworkFile openPreviousVersion(SrvSession session, TreeConnection tree, FileOpenParams params)
+            throws IOException {
+
+        NetworkFile verFile = null;
+
+        try {
+
+            // Find the node for this file
+            NodeRef nodeRef = getNodeForPath(tree, params.getPath());
+
+            if (nodeRef != null) {
+
+                // Get the version history for the file
+                VersionHistory versionHistory = versionService.getVersionHistory( nodeRef);
+
+                if ( versionHistory != null) {
+
+                    // Get the list of versions
+                    Collection<Version> versions = versionHistory.getAllVersions();
+
+                    if ( versions != null) {
+
+                        // Search for the required version details
+                        Iterator<Version> verIter = versions.iterator();
+
+                        while ( verIter.hasNext() && verFile == null) {
+
+                            // Get the current version information
+                            Version curVer = verIter.next();
+
+                            // Convert the version time to seconds
+                            long verTimeSecs = (curVer.getFrozenModifiedDate().getTime() / 1000L) * 1000L;
+
+                            // Check if we found the matching file version
+                            if ( verTimeSecs == params.getPreviousVersionDateTime()) {
+
+                                // Open the previous version of the file for read-only access
+                                verFile = ContentNetworkFile.createFile(nodeService, contentService, mimetypeService, getSMBHelper(), curVer.getFrozenStateNodeRef(),
+                                        params.getPath(), true, false, session);
+                                verFile.setGrantedAccess( NetworkFile.Access.READ_ONLY);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch ( Exception ex) {
+        }
+
+        return verFile;
+    }
+
+    /**
+     * Return the file information for a particular version of a file
+     *
+     * @param sess   Server session
+     * @param tree   Tree connection
+     * @param path   String
+     * @param timeStamp long
+     * @return FileInfo
+     * @throws IOException If an error occurs.
+     */
+    public FileInfo getPreviousVersionFileInformation( SrvSession sess, TreeConnection tree, String path, long timeStamp)
+            throws IOException {
+
+        FileInfo verFileInfo = null;
+
+        try {
+
+            // Find the node for this file
+            NodeRef nodeRef = getNodeForPath(tree, path);
+
+            if (nodeRef != null) {
+
+                // Get the version history for the file
+                VersionHistory versionHistory = versionService.getVersionHistory( nodeRef);
+
+                if ( versionHistory != null) {
+
+                    // Get the list of versions
+                    Collection<Version> versions = versionHistory.getAllVersions();
+
+                    if ( versions != null) {
+
+                        // Search for the required version details
+                        Iterator<Version> verIter = versions.iterator();
+
+                        while ( verIter.hasNext() && verFileInfo == null) {
+
+                            // Get the current version information
+                            Version curVer = verIter.next();
+
+                            // Convert the version time to seconds
+                            long verTimeSecs = (curVer.getFrozenModifiedDate().getTime() / 1000L) * 1000L;
+
+                            // Check if we found the matching file version
+                            if ( verTimeSecs == timeStamp) {
+
+                                // Get the file information of the versioned node
+                                verFileInfo = smbHelper.getFileInformation( curVer.getFrozenStateNodeRef(), true, isLockedFilesAsOffline);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch ( Exception ex) {
+        }
+
+        return verFileInfo;
+    }
 }

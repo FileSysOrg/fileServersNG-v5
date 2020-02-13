@@ -25,29 +25,11 @@
  */
 package org.filesys.alfresco.config;
 
-import java.io.File;
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.NetworkInterface;
-import java.net.Socket;
-import java.net.SocketException;
-import java.net.UnknownHostException;
-import java.nio.charset.Charset;
-import java.nio.charset.IllegalCharsetNameException;
-import java.nio.charset.UnsupportedCharsetException;
-import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.util.EnumSet;
-import java.util.Enumeration;
-import java.util.List;
-import java.util.StringTokenizer;
-
 import org.alfresco.error.AlfrescoRuntimeException;
+import org.alfresco.repo.management.subsystems.ActivateableBean;
 import org.filesys.alfresco.AbstractServerConfigurationBean;
 import org.filesys.alfresco.base.AlfrescoContext;
 import org.filesys.alfresco.base.ExtendedDiskInterface;
-import org.filesys.alfresco.base.HazelCastClusterFileStateCacheV2;
 import org.filesys.alfresco.config.acl.AccessControlListBean;
 import org.filesys.alfresco.repo.*;
 import org.filesys.alfresco.util.WINS;
@@ -74,21 +56,30 @@ import org.filesys.server.filesys.DiskSharedDevice;
 import org.filesys.server.filesys.FilesystemsConfigSection;
 import org.filesys.server.filesys.cache.FileStateLockManager;
 import org.filesys.server.filesys.cache.StandaloneFileStateCache;
+import org.filesys.server.filesys.cache.cluster.ClusterFileStateCache;
 import org.filesys.server.filesys.cache.hazelcast.ClusterConfigSection;
-import org.filesys.server.filesys.cache.hazelcast.HazelCastClusterFileStateCache;
 import org.filesys.server.thread.ThreadRequestPool;
 import org.filesys.smb.DialectSelector;
 import org.filesys.smb.server.SMBConfigSection;
-import org.filesys.smb.server.SMBSrvPacket;
 import org.filesys.smb.server.SMBV1VirtualCircuitList;
-import org.filesys.smb.server.VirtualCircuitList;
+import org.filesys.smb.server.smbv2.config.SMBV2ConfigSection;
+import org.filesys.smb.server.smbv2.config.SMBV3ConfigSection;
 import org.filesys.util.IPAddress;
 import org.filesys.util.MemorySize;
 import org.filesys.util.PlatformType;
 import org.filesys.util.X64;
-import org.alfresco.repo.management.subsystems.ActivateableBean;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.extensions.config.element.GenericConfigElement;
+
+import java.io.File;
+import java.io.IOException;
+import java.net.*;
+import java.nio.charset.Charset;
+import java.nio.charset.IllegalCharsetNameException;
+import java.nio.charset.UnsupportedCharsetException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.util.*;
 
 
 /**
@@ -111,6 +102,8 @@ public class ServerConfigurationBean extends AbstractServerConfigurationBean imp
     private SecurityConfigBean securityConfigBean;
     private CoreServerConfigBean coreServerConfigBean;
     private LicenceConfigBean licenceConfigBean;
+    private SMB2ConfigBean smb2ConfigBean;
+    private SMB3ConfigBean smb3ConfigBean;
 
     private ThreadRequestPool threadPool;
     protected ClusterConfigBean clusterConfigBean;
@@ -206,6 +199,20 @@ public class ServerConfigurationBean extends AbstractServerConfigurationBean imp
     public void setLicenceConfigBean(LicenceConfigBean licenceBean) {
         licenceConfigBean = licenceBean;
     }
+
+    /**
+     * Set the SMB2 configuration
+     *
+     * @param smb2Bean SMB2ConfigBean
+     */
+    public void setSmb2ConfigBean(SMB2ConfigBean smb2Bean) { smb2ConfigBean = smb2Bean; }
+
+    /**
+     * Set the SMB3 configuration
+     *
+     * @param smb3Bean SMB2ConfigBean
+     */
+    public void setSmb3ConfigBean(SMB3ConfigBean smb3Bean) { smb3ConfigBean = smb3Bean; }
 
     /**
      * Process the SMB server configuration
@@ -1202,7 +1209,35 @@ public class ServerConfigurationBean extends AbstractServerConfigurationBean imp
                 // Convert the session timeout to milliseconds
 
                 smbConfig.setSocketTimeout(tmo * 1000);
-            }            
+            }
+
+            // Check for SMB2 specific configuration settings
+            if ( smb2ConfigBean != null) {
+
+                // Create the SMB2 configuration section
+                SMBV2ConfigSection smb2Config = new SMBV2ConfigSection(this);
+
+                // Set the maximum packet size to use for SMB2 requests/responses
+                if ( smb2ConfigBean.getMaxPacketSize() > 0)
+                    smb2Config.setMaximumPacketSize( smb2ConfigBean.getMaxPacketSize());
+
+                // Check if signing is required
+                smb2Config.setPacketSigningRequired(smbConfigBean.getRequireSigning());
+            }
+
+            // Check for SMB3 specific configuration settings
+            if ( smb3ConfigBean != null) {
+
+                // Create the SMB3 configuration section
+                SMBV3ConfigSection smb3Config = new SMBV3ConfigSection(this);
+
+                // Set the primary and secondary encryption types/order
+                smb3Config.setPrimaryEncryptionType( smb3ConfigBean.getPrimaryEncryptionType());
+                smb3Config.setSecondaryEncryptionType( smb3ConfigBean.getSecondaryEncryptionType());
+
+                // Set the SMB3 encryption disabled flag
+                smb3Config.setDisableEncryption( smb3ConfigBean.getDisableEncryption());
+            }
         }
         catch (InvalidConfigurationException ex)
         {
@@ -1654,15 +1689,23 @@ public class ServerConfigurationBean extends AbstractServerConfigurationBean imp
                             logger.debug("start hazelcast cache : " + clusterConfigBean.getClusterName() + ", shareName: "+ filesysContext.getShareName());
                         }
                         GenericConfigElement hazelConfig = createClusterConfig("SMB.filesys."+filesysContext.getShareName());
-                        HazelCastClusterFileStateCache hazel = new HazelCastClusterFileStateCacheV2();
-                        hazel.initializeCache(hazelConfig, this);   
-                        filesysContext.setStateCache(hazel);
+                        ClusterFileStateCache hazel = null;
+
+                        try {
+                            hazel = (ClusterFileStateCache) Class.forName("org.filesys.server.filesys.cache.hazelcast.HazelCastClusterFileStateCacheV3").newInstance();
+                            hazel.initializeCache(hazelConfig, this);
+                            filesysContext.setStateCache(hazel);
+                        }
+                        catch ( Exception ex) {
+                            throw new AlfrescoRuntimeException(ex.getMessage(), ex);
+                        }
                     }
                     else
                     {
                         // Create state cache here and inject
                         StandaloneFileStateCache standaloneCache = new StandaloneFileStateCache();
                         standaloneCache.initializeCache( new GenericConfigElement( ""), this);
+
                         filesysContext.setStateCache(standaloneCache);
                     }
                     
@@ -1913,7 +1956,7 @@ public class ServerConfigurationBean extends AbstractServerConfigurationBean imp
     	// Check if the SMB server is not enabled, do not create the thread/memory pools
     	if ( smbConfigBean == null || smbConfigBean.getServerEnabled() == false)
     		return;
-    	
+
         // Check if the server core element has been specified
         if (coreServerConfigBean == null)
         {
@@ -2102,13 +2145,17 @@ public class ServerConfigurationBean extends AbstractServerConfigurationBean imp
                           logger.debug("start hazelcast cache : " + clusterConfigBean.getClusterName() + ", uniqueName: "+ uniqueName);
                       }
 
-                      // TODO: Determine which version of Hazelcast ia available
-                      // TODO: Create V2 or V3 Hazelcast file state cache
+                      GenericConfigElement hazelConfig = createClusterConfig(uniqueName);
+                      ClusterFileStateCache hazel = null;
 
-                      GenericConfigElement hazelConfig = createClusterConfig(uniqueName); 
-                      HazelCastClusterFileStateCache hazel = new HazelCastClusterFileStateCacheV2();
-                      hazel.initializeCache(hazelConfig, this);   
-                      diskCtx.setStateCache(hazel);
+                      try {
+                          hazel = (ClusterFileStateCache) Class.forName("org.filesys.server.filesys.cache.hazelcast.HazelCastClusterFileStateCacheV3").newInstance();
+                          hazel.initializeCache(hazelConfig, this);
+                          diskCtx.setStateCache(hazel);
+                      }
+                      catch ( Exception ex) {
+                          throw new AlfrescoRuntimeException(ex.getMessage(), ex);
+                      }
                   }
                   else
                   {          
@@ -2217,8 +2264,23 @@ public class ServerConfigurationBean extends AbstractServerConfigurationBean imp
      * @return int[]
      */
     protected int[] getMemoryBufferSizes() {
-        if ( licenceConfigBean != null)
+        if ( licenceConfigBean != null) {
+
+            // Check if there is a custom maximum packet size for SMBv2
+            if ( smb2ConfigBean != null && smb2ConfigBean.getMaxPacketSize() > 0) {
+
+                // Create a custom set of buffer sizes
+                int[] bufSizes = Arrays.copyOf( EnterpriseMemoryPoolBufSizes, EnterpriseMemoryPoolBufSizes.length);
+
+                // Use the custom maximum packet size value for the largest buffer size
+                bufSizes[ bufSizes.length -1] = smb2ConfigBean.getMaxPacketSize();
+
+                return bufSizes;
+            }
+
+            // Use the default buffer sizes
             return EnterpriseMemoryPoolBufSizes;
+        }
         else
             return DefaultMemoryPoolBufSizes;
     }

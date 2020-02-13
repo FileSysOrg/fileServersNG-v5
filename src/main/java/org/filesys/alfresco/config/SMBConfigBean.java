@@ -25,15 +25,14 @@
  */
 package org.filesys.alfresco.config;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.StringTokenizer;
-
 import org.alfresco.error.AlfrescoRuntimeException;
 import org.filesys.server.auth.ISMBAuthenticator;
 import org.filesys.smb.DialectSelector;
 import org.filesys.smb.server.SMBV1VirtualCircuitList;
-import org.filesys.smb.server.VirtualCircuitList;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.StringTokenizer;
 
 import static org.filesys.alfresco.AbstractServerConfigurationBean.MaxSessionTimeout;
 
@@ -116,6 +115,9 @@ public class SMBConfigBean
 
     // Enabled dialect set
     private DialectSelector enabledDialects;
+
+    // Require signing, client must support and enable signing of requests
+    private boolean requireSigning;
 
     /**
      * Class constructor
@@ -668,5 +670,21 @@ public class SMBConfigBean
 
         // Set the enabled dialects list
         enabledDialects = enaDialects;
+    }
+
+    /**
+     * Check if signing is required for all sessions
+     *
+     * @return boolean
+     */
+    public boolean getRequireSigning() { return requireSigning; }
+
+    /**
+     * Set the require signing flag
+     *
+     * @param reqSigning boolean
+     */
+    public void setRequireSigning(boolean reqSigning) {
+        requireSigning = reqSigning;
     }
 }

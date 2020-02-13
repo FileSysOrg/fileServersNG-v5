@@ -21,7 +21,6 @@ import org.alfresco.error.AlfrescoRuntimeException;
 import org.alfresco.model.ContentModel;
 import org.alfresco.repo.management.subsystems.ActivateableBean;
 import org.alfresco.repo.security.authentication.*;
-import org.alfresco.repo.security.authentication.ntlm.NLTMAuthenticator;
 import org.alfresco.repo.transaction.RetryingTransactionHelper;
 import org.alfresco.service.cmr.repository.NodeRef;
 import org.alfresco.service.cmr.repository.NodeService;
@@ -33,7 +32,9 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.filesys.alfresco.base.AlfrescoClientInfo;
 import org.filesys.alfresco.base.AlfrescoClientInfoFactory;
-import org.filesys.server.auth.*;
+import org.filesys.server.auth.ClientInfo;
+import org.filesys.server.auth.SecurityBlob;
+import org.filesys.server.auth.TransactionalSMBAuthenticator;
 import org.filesys.server.auth.spnego.NegTokenInit;
 import org.filesys.server.auth.spnego.OID;
 import org.filesys.server.config.InvalidConfigurationException;
@@ -41,6 +42,7 @@ import org.filesys.server.filesys.DiskInterface;
 import org.filesys.smb.SMBStatus;
 import org.filesys.smb.server.SMBSrvException;
 import org.filesys.smb.server.SMBSrvSession;
+import org.filesys.smb.server.smbv2.auth.V2EnterpriseSMBAuthenticator;
 import org.ietf.jgss.Oid;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
@@ -49,6 +51,9 @@ import javax.security.auth.Subject;
 import javax.security.auth.login.LoginContext;
 import javax.security.auth.login.LoginException;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Paths;
 import java.security.Principal;
 import java.util.List;
 import java.util.Vector;
@@ -60,7 +65,7 @@ import java.util.Vector;
  *
  * @author gkspencer
  */
-public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
+public class AlfrescoSMBAuthenticator extends V2EnterpriseSMBAuthenticator
     implements TransactionalSMBAuthenticator, ActivateableBean, InitializingBean, DisposableBean {
 
     // Logging
@@ -269,6 +274,52 @@ public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
         m_stripKerberosUsernameSuffix = stripKerberosUsernameSuffix;
     }
 
+    /**
+     * Set the Kerberos configuration path
+     *
+     * @param krbConfPath String
+     */
+    public void setKerberosConfiguration(String krbConfPath) {
+
+        if ( krbConfPath != null && krbConfPath.length() > 0) {
+
+            // Make sure the Kerberos configuration file exists
+            if (Files.exists( Paths.get( krbConfPath), LinkOption.NOFOLLOW_LINKS)) {
+
+                // Set the Kerberos configuration path
+                System.setProperty( "java.security.krb5.conf", krbConfPath);
+            }
+            else {
+
+                // Configuration file does not exist
+                throw new AlfrescoRuntimeException("Kerberos configuration file does not exist - " + krbConfPath);
+            }
+        }
+    }
+
+    /**
+     * Set the Java login configuration path
+     *
+     * @param loginConfPath String
+     */
+    public void setLoginConfiguration(String loginConfPath) {
+
+        if ( loginConfPath != null && loginConfPath.length() > 0) {
+
+            // Make sure the login configuration file exists
+            if (Files.exists( Paths.get( loginConfPath), LinkOption.NOFOLLOW_LINKS)) {
+
+                // Set the login configuration path
+                System.setProperty( "java.security.auth.login.config", loginConfPath);
+            }
+            else {
+
+                // Configuration file does not exist
+                throw new AlfrescoRuntimeException("Login configuration file does not exist - " + loginConfPath);
+            }
+        }
+    }
+
     /*
      * (non-Javadoc)
      * @see org.alfresco.repo.management.subsystems.ActivateableBean#isActive()
@@ -319,13 +370,6 @@ public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
         // Check if Kerberos is enabled
         if (m_krbRealm != null && m_krbRealm.length() > 0)
         {
-
-            // Get the SMB service account password
-            if (m_password == null || m_password.length() == 0)
-            {
-                throw new InvalidConfigurationException("SMB service account password not specified");
-            }
-
             // Get the login configuration entry name
             if (m_loginEntryName == null || m_loginEntryName.length() == 0)
             {
@@ -435,18 +479,6 @@ public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
         {
             // Use raw NTLMSSP security blobs
         }
-
-        // Make sure that either Kerberos support is enabled and/or the authentication component supports MD4 hashed passwords
-        if (!isKerberosEnabled() && (!(getAuthenticationComponent() instanceof NLTMAuthenticator) || getNTLMAuthenticator().getNTLMMode() != NTLMMode.MD4_PROVIDER))
-        {
-            if(logger.isDebugEnabled())
-            {
-                logger.debug("No valid SMB authentication combination available, Either enable Kerberos support or use an SSO-enabled authentication component that supports MD4 hashed passwords");
-            }
-
-            // Throw an exception to stop the SMB server startup
-            throw new AlfrescoRuntimeException("No valid SMB authentication combination available, Either enable Kerberos support or use an SSO-enabled authentication component that supports MD4 hashed passwords");
-        }
     }
 
     /**
@@ -469,15 +501,42 @@ public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
             // context for subsequent requests
             getAuthenticationService().authenticateAsGuest();
             alfClient.setAuthenticationTicket(getAuthenticationService().getCurrentTicket());
+
+            // DEBUG
+            if ( logger.isDebugEnabled())
+                logger.debug("Logged on as guest");
         }
         else {
 
-            // Set the authentication context to the current user
-            authenticationComponent.setCurrentUser( client.getUserName());
+            // Check if the username suffix should be stripped
+            String userName = client.getUserName();
+
+            if ( m_stripKerberosUsernameSuffix == false && client.hasLoggedOnName()) {
+
+                // Use the full user name that was used to logon, that includes the Kerberos realm
+                userName = client.getLoggedOnName();
+            }
+
+            // Map the user name to an Alfresco person name
+            String personName = mapUserNameToPerson( userName, true);
+
+            // DEBUG
+            if ( logger.isDebugEnabled())
+                logger.debug("Mapped user name " + userName + " to person " + personName);
+
+            try {
+
+                // Set the authentication context to the current user/person
+                authenticationComponent.setCurrentUser(personName); //, AuthenticationComponent.UserNameValidationMode.NONE);
+            }
+            catch ( AuthenticationException ex) {
+
+                ex.printStackTrace();
+            }
 
             // Save the current ticket to be used to setup the authentication context for subsequent requests
             // for this session/virtual circuit
-            alfClient.setAuthenticationTicket(getAuthenticationService().getCurrentTicket() );
+            alfClient.setAuthenticationTicket(getAuthenticationService().getCurrentTicket());
         }
 
         // Check if the user is an administrator
@@ -485,7 +544,6 @@ public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
 
         // Get the users home folder node, if available
         getHomeFolderForUser( client);
-
     }
 
     /**
@@ -724,20 +782,6 @@ public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
 
 
     /**
-     * Returns an SSO-enabled authentication component.
-     *
-     * @return NLTMAuthenticator
-     */
-    protected final NLTMAuthenticator getNTLMAuthenticator()
-    {
-        if (!(this.authenticationComponent instanceof NLTMAuthenticator))
-        {
-            throw new IllegalStateException("Attempt to use non SSO-enabled authentication component for SSO");
-        }
-        return (NLTMAuthenticator) this.authenticationComponent;
-    }
-
-    /**
      * Return the authentication service.
      *
      * @return AuthenticationService
@@ -844,7 +888,7 @@ public class AlfrescoSMBAuthenticator extends EnterpriseSMBAuthenticator
     }
 
     @Override
-    public ISMBAuthenticator.AuthStatus processSecurityBlobInTransaction(SMBSrvSession sess, ClientInfo client, SecurityBlob secBlob)
+    public AuthStatus processSecurityBlobInTransaction(SMBSrvSession sess, ClientInfo client, SecurityBlob secBlob)
             throws SMBSrvException {
 
         // Try and do the logon
