@@ -183,6 +183,10 @@
         <property name="loginConfiguration">
             <value>${smb.login.config}</value>
         </property>
+
+        <property name="password">
+            <value>${smb.kerberos.password}</value>
+        </property>
     </bean>
 
     <!-- FTP authentication -->
@@ -469,6 +473,9 @@
         </property>
         <property name="disableEncryption">
             <value>${smb.smb3DisableEncryption}</value>
+        </property>
+        <property name="AESProviderName">
+            <value>${smb.AESProvider}</value>
         </property>
     </bean>
 
