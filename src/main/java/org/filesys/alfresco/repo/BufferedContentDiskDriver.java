@@ -29,6 +29,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.Serializable;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.List;
 
 import org.filesys.alfresco.base.ExtendedDiskInterface;
@@ -522,9 +523,9 @@ public class BufferedContentDiskDriver implements ExtendedDiskInterface,
 
     @Override
     public void renameFile(SrvSession sess, TreeConnection tree,
-            String oldName, String newName) throws IOException
+            String oldName, String newName, NetworkFile netFile) throws IOException
     {
-        diskInterface.renameFile(sess, tree, oldName, newName);       
+        diskInterface.renameFile(sess, tree, oldName, newName, netFile);
     }
 
     @Override
@@ -543,9 +544,9 @@ public class BufferedContentDiskDriver implements ExtendedDiskInterface,
 
     @Override
     public SearchContext startSearch(SrvSession sess, TreeConnection tree,
-            String searchPath, int attrib) throws FileNotFoundException
+                                     String searchPath, int attrib, EnumSet<SearchFlags> flags) throws FileNotFoundException
     {
-        return diskInterface.startSearch(sess, tree, searchPath, attrib);
+        return diskInterface.startSearch(sess, tree, searchPath, attrib, flags);
     }
 
     @Override

@@ -756,18 +756,8 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
         }
     }
 
-    /**
-     * Start a new search on the filesystem using the specified searchPath that may contain
-     * wildcards.
-     * 
-     * @param session Server session
-     * @param tree Tree connection
-     * @param searchPath File(s) to search for, may include wildcards.
-     * @param attributes Attributes of the file(s) to search for, see class SMBFileAttribute.
-     * @return SearchContext
-     * @exception java.io.FileNotFoundException If the search could not be started.
-     */
-    public SearchContext startSearch(SrvSession session, TreeConnection tree, String searchPath, int attributes) throws FileNotFoundException
+    @Override
+    public SearchContext startSearch(SrvSession session, TreeConnection tree, String searchPath, int attributes, EnumSet<SearchFlags> flags) throws FileNotFoundException
     {
         if(logger.isDebugEnabled())
         {
@@ -1348,7 +1338,7 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
         return null;
     }
     
-    public void renameFile(final SrvSession session, final TreeConnection tree, final String oldName, final String newName)
+    public void renameFile(final SrvSession session, final TreeConnection tree, final String oldName, final String newName, NetworkFile netFile)
     throws IOException
     {
         throw new AlfrescoRuntimeException("obsolete method called");

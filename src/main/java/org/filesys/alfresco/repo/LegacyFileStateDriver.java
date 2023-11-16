@@ -28,10 +28,10 @@ package org.filesys.alfresco.repo;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Date;
+import java.util.EnumSet;
 
 import org.filesys.alfresco.base.ExtendedDiskInterface;
 import org.filesys.alfresco.base.NetworkFileLegacyReferenceCount;
-import org.filesys.alfresco.config.ServerConfigurationBean;
 import org.filesys.server.SrvSession;
 import org.filesys.server.core.DeviceContext;
 import org.filesys.server.core.DeviceContextException;
@@ -42,8 +42,6 @@ import org.filesys.server.locking.FileLockingInterface;
 import org.filesys.server.locking.LockManager;
 import org.filesys.server.locking.OpLockInterface;
 import org.filesys.server.locking.OpLockManager;
-import org.filesys.smb.SharingMode;
-import org.alfresco.model.ContentModel;
 import org.alfresco.util.PropertyCheck;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -614,11 +612,11 @@ public class LegacyFileStateDriver implements ExtendedDiskInterface
 
     @Override
     public void renameFile(SrvSession sess, TreeConnection tree,
-            String oldName, String newName) throws IOException
+            String oldName, String newName, NetworkFile netFile) throws IOException
     {
         ContentContext tctx = (ContentContext) tree.getContext();
         
-        diskInterface.renameFile(sess, tree, oldName, newName);  
+        diskInterface.renameFile(sess, tree, oldName, newName, netFile);
         
         if(tctx.hasStateCache())
         {
@@ -681,11 +679,11 @@ public class LegacyFileStateDriver implements ExtendedDiskInterface
 
     @Override
     public SearchContext startSearch(SrvSession sess, TreeConnection tree,
-            String searchPath, int attrib) throws FileNotFoundException
+            String searchPath, int attrib, EnumSet<SearchFlags> flags) throws FileNotFoundException
     {
         InFlightCorrector t = new InFlightCorrectorImpl(tree);  
         
-        SearchContext ctx = diskInterface.startSearch(sess, tree, searchPath, attrib);
+        SearchContext ctx = diskInterface.startSearch(sess, tree, searchPath, attrib, flags);
         
         if(ctx instanceof InFlightCorrectable)
         {
