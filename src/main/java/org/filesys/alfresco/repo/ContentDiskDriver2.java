@@ -1860,7 +1860,7 @@ public class ContentDiskDriver2 extends  AlfrescoDiskDriver implements ExtendedD
             FileState fstate = contentFile.getFileState();
             if ( fstate != null && size > fstate.getAllocationSize())
             {
-                fstate.setAllocationSize(size);
+                fstate.setAllocationSize( size);
             }
         }
         
